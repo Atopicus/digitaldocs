@@ -1,0 +1,84 @@
+# Stack de digitaldocs. Se versiona aquí y se copia a ~/supabase-digitaldocs/
+# (ops/stack/install.sh). Los secretos viven en ~/supabase-digitaldocs/.env.
+# Nunca valores literales: solo ${VAR}.
+#
+# Las cadenas de conexión usan el nombre cualificado del contenedor
+# (digitaldocs-db), nunca "db": en proxy-net los alias son compartidos.
+name: digitaldocs
+
+services:
+  db:
+    image: supabase/postgres:15.1.0.147
+    container_name: digitaldocs-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+    volumes:
+      - ./data/db:/var/lib/postgresql/data
+    # Excepción documentada (CLAUDE.md §1.8): solo loopback, para migraciones,
+    # tests y generación de tipos. El 5432 del host es de nosdiners.
+    ports:
+      - "127.0.0.1:5433:5432"
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  auth:
+    image: supabase/gotrue:v2.132.3
+    container_name: digitaldocs-auth
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      PORT: 9999
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@digitaldocs-db:5432/postgres?search_path=auth&sslmode=disable
+      GOTRUE_SITE_URL: https://digitaldocs.joansalas.com
+      GOTRUE_URI_ALLOW_LIST: "https://digitaldocs.joansalas.com/**"
+      API_EXTERNAL_URL: https://api-digitaldocs.joansalas.com
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_EXP: 3600
+      # Marcados como deprecados en los logs, pero obligatorios: sin ellos los
+      # usuarios nacen con role = '' y toda petición autenticada da 400.
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_DISABLE_SIGNUP: "false"
+      # Fase 4b: pasa a "false" y se añade el bloque SMTP de Resend.
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+    expose:
+      - "9999"
+    networks:
+      - internal
+      - proxy-net
+
+  rest:
+    image: postgrest/postgrest:v12.0.2
+    container_name: digitaldocs-rest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@digitaldocs-db:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    expose:
+      - "3000"
+    networks:
+      - internal
+      - proxy-net
+
+networks:
+  internal:
+    driver: bridge
+  proxy-net:
+    external: true
