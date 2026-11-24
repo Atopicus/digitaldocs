@@ -28,7 +28,7 @@ services:
       timeout: 5s
       retries: 10
 
-  auth:
+  digitaldocs-auth:
     image: supabase/gotrue:v2.132.3
     container_name: digitaldocs-auth
     restart: unless-stopped
@@ -58,7 +58,7 @@ services:
       - internal
       - proxy-net
 
-  rest:
+  digitaldocs-rest:
     image: postgrest/postgrest:v12.0.2
     container_name: digitaldocs-rest
     restart: unless-stopped
